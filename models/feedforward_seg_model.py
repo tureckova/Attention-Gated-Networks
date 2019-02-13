@@ -126,6 +126,10 @@ class FeedForwardSegmentation(BaseModel):
         for class_id in range(self.dice_score.size):
             seg_stats.append(('Class_{}'.format(class_id), self.dice_score[class_id]))
         return OrderedDict(seg_stats)
+        
+    def get_loss(self):
+        self.seg_scores, self.dice_score = segmentation_stats(self.prediction, self.target)
+        return self.dice_score
 
     def get_current_errors(self):
         return OrderedDict([('Seg_Loss', self.loss_S.data[0])

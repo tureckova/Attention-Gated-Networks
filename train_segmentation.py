@@ -6,8 +6,9 @@ from tqdm import tqdm
 from dataio.loader import get_dataset, get_dataset_path
 from dataio.transformation import get_dataset_transformation
 from utils.util import json_file_to_pyobj
-from utils.visualiser import Visualiser
-from utils.error_logger import ErrorLogger
+#from utils.visualiser import Visualiser
+#from utils.error_logger import ErrorLogger
+from tensorboardX import SummaryWriter
 
 from models import get_model
 
@@ -25,8 +26,8 @@ def train(arguments):
     arch_type = train_opts.arch_type
 
     # Setup Dataset and Augmentation
-    ds_class = get_dataset(arch_type)
-    ds_path  = get_dataset_path(arch_type, json_opts.data_path)
+    ds_class = get_dataset("HDF5")
+    ds_path  = get_dataset_path("HDF5", json_opts.data_path)
     ds_transform = get_dataset_transformation(arch_type, opts=json_opts.augmentation)
 
     # Setup the NN Model
@@ -39,14 +40,15 @@ def train(arguments):
     # Setup Data Loader
     train_dataset = ds_class(ds_path, split='train',      transform=ds_transform['train'], preload_data=train_opts.preloadData)
     valid_dataset = ds_class(ds_path, split='validation', transform=ds_transform['valid'], preload_data=train_opts.preloadData)
-    test_dataset  = ds_class(ds_path, split='test',       transform=ds_transform['valid'], preload_data=train_opts.preloadData)
-    train_loader = DataLoader(dataset=train_dataset, num_workers=16, batch_size=train_opts.batchSize, shuffle=True)
-    valid_loader = DataLoader(dataset=valid_dataset, num_workers=16, batch_size=train_opts.batchSize, shuffle=False)
-    test_loader  = DataLoader(dataset=test_dataset,  num_workers=16, batch_size=train_opts.batchSize, shuffle=False)
+    #test_dataset  = ds_class(ds_path, split='test',       transform=ds_transform['valid'], preload_data=train_opts.preloadData)
+    train_loader = DataLoader(dataset=train_dataset, num_workers=1, batch_size=train_opts.batchSizeTrain, shuffle=True)
+    valid_loader = DataLoader(dataset=valid_dataset, num_workers=1, batch_size=train_opts.batchSizeVal, shuffle=False)
+    #test_loader  = DataLoader(dataset=test_dataset,  num_workers=16, batch_size=train_opts.batchSize, shuffle=False)
 
     # Visualisation Parameters
-    visualizer = Visualiser(json_opts.visualisation, save_dir=model.save_dir)
-    error_logger = ErrorLogger()
+    #visualizer = Visualiser(json_opts.visualisation, save_dir=model.save_dir)
+    #error_logger = ErrorLogger()
+    writer = SummaryWriter(log_dir=model.save_dir)
 
     # Training Function
     model.set_scheduler(train_opts)
@@ -54,39 +56,65 @@ def train(arguments):
         print('(epoch: %d, total # iters: %d)' % (epoch, len(train_loader)))
 
         # Training Iterations
+        train_loss_total = 0.0
+        num_steps = 0
         for epoch_iter, (images, labels) in tqdm(enumerate(train_loader, 1), total=len(train_loader)):
             # Make a training update
             model.set_input(images, labels)
             model.optimize_parameters()
             #model.optimize_parameters_accumulate_grd(epoch_iter)
 
-            # Error visualisation
-            errors = model.get_current_errors()
-            error_logger.update(errors, split='train')
-
+            # # Error visualisation
+            # errors = model.get_current_errors()
+            # error_logger.update(errors, split='train')
+            
+            #tensorboard loss 
+            train_loss_total+= model.get_loss()
+            num_steps += 1
+            
+        # tensorboard train loss
+        train_loss_total_avg = train_loss_total / num_steps
+        
         # Validation and Testing Iterations
-        for loader, split in zip([valid_loader, test_loader], ['validation', 'test']):
-            for epoch_iter, (images, labels) in tqdm(enumerate(loader, 1), total=len(loader)):
+        val_loss_total = 0.0
+        num_steps = 0
+        #for loader, split in zip([valid_loader, test_loader], ['validation', 'test']):
+        for epoch_iter, (images, labels) in tqdm(enumerate(valid_loader, 1), total=len(valid_loader)):
+            split = 'validation'
 
-                # Make a forward pass with the model
-                model.set_input(images, labels)
-                model.validate()
+            # Make a forward pass with the model
+            model.set_input(images, labels)
+            model.validate()
 
-                # Error visualisation
-                errors = model.get_current_errors()
-                stats = model.get_segmentation_stats()
-                error_logger.update({**errors, **stats}, split=split)
+            # # Error visualisation
+            # errors = model.get_current_errors()
+            # stats = model.get_segmentation_stats()
+            # error_logger.update({**errors, **stats}, split=split)
 
-                # Visualise predictions
-                visuals = model.get_current_visuals()
-                visualizer.display_current_results(visuals, epoch=epoch, save_result=False)
+            # # Visualise predictions
+            # visuals = model.get_current_visuals()
+            # visualizer.display_current_results(visuals, epoch=epoch, save_result=False)
+            
+            #tensorboard loss
+            val_loss_total += model.get_loss()
+            num_steps += 1
+        # tensorboard val loss 
+        val_loss_total_avg = val_loss_total / num_steps
 
-        # Update the plots
-        for split in ['train', 'validation', 'test']:
-            visualizer.plot_current_errors(epoch, error_logger.get_errors(split), split_name=split)
-            visualizer.print_current_errors(epoch, error_logger.get_errors(split), split_name=split)
-        error_logger.reset()
-
+        # # Update the plots
+        # for split in ['train', 'validation']:#, 'test']:
+            # #visualizer.plot_current_errors(epoch, error_logger.get_errors(split), split_name=split)
+            # visualizer.print_current_errors(epoch, error_logger.get_errors(split), split_name=split)
+        # error_logger.reset()
+        
+        # Visualize progress in tensorboard
+        writer.add_scalars('losses', {
+                                'val_loss': val_loss_total_avg,
+                                'train_loss': train_loss_total_avg
+                            }, epoch)
+        lr = model.optimizers[0].param_groups[0]['lr']
+        writer.add_scalar('learning_rate', lr, epoch)
+        
         # Save the model parameters
         if epoch % train_opts.save_epoch_freq == 0:
             model.save(epoch)

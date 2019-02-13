@@ -37,7 +37,8 @@ class SoftDiceLoss(nn.Module):
         batch_size = input.size(0)
 
         input = F.softmax(input, dim=1).view(batch_size, self.n_classes, -1)
-        target = self.one_hot_encoder(target).contiguous().view(batch_size, self.n_classes, -1)
+        #target = self.one_hot_encoder(target).contiguous().view(batch_size, self.n_classes, -1)
+        target = target.contiguous().view(batch_size, self.n_classes, -1)
 
         inter = torch.sum(input * target, 2) + smooth
         union = torch.sum(input, 2) + torch.sum(target, 2) + smooth
@@ -76,7 +77,7 @@ class One_Hot(nn.Module):
     def __init__(self, depth):
         super(One_Hot, self).__init__()
         self.depth = depth
-        self.ones = torch.sparse.torch.eye(depth).cuda()
+        self.ones = torch.eye(depth).cuda()
 
     def forward(self, X_in):
         n_dim = X_in.dim()
